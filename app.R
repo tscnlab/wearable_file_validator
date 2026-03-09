@@ -1,0 +1,665 @@
+library(shiny)
+library(vroom)
+library(tools)
+
+`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+
+escape_html <- function(x) {
+  x <- gsub("&", "&amp;", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  x <- gsub(">", "&gt;", x, fixed = TRUE)
+  x
+}
+
+syntactic_name_ok <- function(x) {
+  if (is.na(x) || !nzchar(x)) return(FALSE)
+  make.names(x) == x
+}
+
+is_unique <- function(x) length(unique(x)) == length(x)
+
+guess_separator_from_header <- function(header_line) {
+  seps <- c("," = ",", ";" = ";", "\t" = "\t", "|" = "|")
+  counts <- vapply(seps, function(s) {
+    if (s == "\t") {
+      lengths(strsplit(header_line, "\t", fixed = TRUE)) - 1L
+    } else {
+      lengths(strsplit(header_line, s, fixed = TRUE)) - 1L
+    }
+  }, integer(1))
+  names(counts)[which.max(counts)]
+}
+
+safe_read_lines <- function(path, n = 2000L) {
+  con <- file(path, open = "rb")
+  on.exit(close(con), add = TRUE)
+  readLines(con, n = n, warn = FALSE, encoding = "UTF-8")
+}
+
+safe_read_vroom <- function(path, delim = ",", n_max = Inf, col_select = NULL, altrep = TRUE) {
+  vroom::vroom(
+    file = path,
+    delim = delim,
+    col_select = col_select,
+    altrep = altrep,
+    show_col_types = FALSE,
+    progress = FALSE,
+    na = c("", "NA", "N/A", "NULL", "null"),
+    trim_ws = FALSE,
+    num_threads = max(1, parallel::detectCores(logical = TRUE) - 1),
+    n_max = n_max
+  )
+}
+
+parse_posix_utc <- function(x) {
+  suppressWarnings(as.POSIXct(x, tz = "UTC", format = "%Y-%m-%dT%H:%M:%OSZ"))
+}
+
+nice_n <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
+
+make_check <- function(level, id, title, status, message, details = NULL) {
+  list(
+    level = level,
+    id = id,
+    title = title,
+    status = status,
+    message = message,
+    details = details
+  )
+}
+
+status_icon <- function(status) {
+  switch(
+    status,
+    pass = "✅",
+    warn = "⚠️",
+    fail = "❌",
+    info = "ℹ️",
+    "•"
+  )
+}
+
+status_class <- function(status) {
+  switch(
+    status,
+    pass = "success",
+    warn = "warning",
+    fail = "danger",
+    info = "info",
+    "secondary"
+  )
+}
+
+validate_level_1_file <- function(path) {
+  checks <- list()
+  info <- file.info(path)
+
+  if (is.na(info$size) || info$size <= 0) {
+    checks[[length(checks) + 1]] <- make_check(
+      1, "file_exists", "Readable file",
+      "fail",
+      "The uploaded file is empty or inaccessible."
+    )
+    return(checks)
+  }
+
+  checks[[length(checks) + 1]] <- make_check(
+    1, "file_exists", "Readable file",
+    "pass",
+    paste0("The file is accessible and has size ", nice_n(info$size), " bytes.")
+  )
+
+  ext <- tolower(file_ext(path))
+  if (ext %in% c("csv", "gz", "txt")) {
+    checks[[length(checks) + 1]] <- make_check(
+      1, "extension", "Filename extension",
+      "pass",
+      paste0("The file extension is .", ext, ".")
+    )
+  } else {
+    checks[[length(checks) + 1]] <- make_check(
+      1, "extension", "Filename extension",
+      "warn",
+      paste0("The file extension is .", ext, ". A .csv extension is recommended.")
+    )
+  }
+
+  checks
+}
+
+validate_level_2_lines <- function(lines, path) {
+  checks <- list()
+
+  if (length(lines) == 0) {
+    checks[[length(checks) + 1]] <- make_check(
+      2, "lines_present", "Text content available",
+      "fail",
+      "No text lines could be read from the file."
+    )
+    return(checks)
+  }
+
+  checks[[length(checks) + 1]] <- make_check(
+    2, "lines_present", "Text content available",
+    "pass",
+    paste0("Successfully read ", nice_n(length(lines)), " initial lines for structural inspection.")
+  )
+
+  header <- lines[1]
+  guessed_sep <- guess_separator_from_header(header)
+  guessed_label <- if (guessed_sep == "\t") "tab" else guessed_sep
+
+  if (guessed_sep == ",") {
+    checks[[length(checks) + 1]] <- make_check(
+      2, "separator_guess", "Separator heuristic",
+      "pass",
+      "The header appears to use a comma separator."
+    )
+  } else {
+    checks[[length(checks) + 1]] <- make_check(
+      2, "separator_guess", "Separator heuristic",
+      "warn",
+      paste0("The header appears more consistent with the separator '", guessed_label, "' than with ','.")
+    )
+  }
+
+  field_counts_csv <- vapply(lines, function(z) length(strsplit(z, ",", fixed = TRUE)[[1]]), integer(1))
+  unique_counts <- sort(unique(field_counts_csv))
+
+  if (length(unique_counts) == 1) {
+    if (unique_counts == 1) {
+      checks[[length(checks) + 1]] <- make_check(
+        2, "single_column_csv", "Column count under comma parsing",
+        "warn",
+        "Parsing the inspected lines with ',' yields only one column. This often indicates that the wrong separator was used."
+      )
+    } else {
+      checks[[length(checks) + 1]] <- make_check(
+        2, "rectangular_text", "Rectangular structure under comma parsing",
+        "pass",
+        paste0("All inspected lines have ", unique_counts, " fields when split on ','.")
+      )
+    }
+  } else {
+    details <- paste0("Observed field counts in inspected lines: ", paste(unique_counts, collapse = ", "))
+    checks[[length(checks) + 1]] <- make_check(
+      2, "rectangular_text", "Rectangular structure under comma parsing",
+      "warn",
+      "The inspected lines do not all have the same number of comma-separated fields. This may indicate a non-rectangular file, quoting problems, or the wrong separator.",
+      details = details
+    )
+  }
+
+  checks
+}
+
+validate_level_3_import <- function(path, delim = ",") {
+  checks <- list()
+  dat <- NULL
+  err <- NULL
+
+  dat <- tryCatch(
+    safe_read_vroom(path, delim = delim),
+    error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (is.null(dat)) {
+    checks[[length(checks) + 1]] <- make_check(
+      3, "vroom_read", "Read with vroom",
+      "fail",
+      "The file could not be read with vroom using a comma separator.",
+      details = err
+    )
+    return(list(checks = checks, data = NULL))
+  }
+
+  checks[[length(checks) + 1]] <- make_check(
+    3, "vroom_read", "Read with vroom",
+    "pass",
+    paste0("The file was read successfully with vroom. Detected ", ncol(dat), " columns and ", nice_n(nrow(dat)), " rows.")
+  )
+
+  cls <- vapply(dat, function(x) class(x)[1], character(1))
+  detected <- paste(paste(names(cls), cls, sep = ": "), collapse = "; ")
+
+  checks[[length(checks) + 1]] <- make_check(
+    3, "detected_types", "Auto-detected column types",
+    "info",
+    "Detected primary column classes.",
+    details = detected
+  )
+
+  list(checks = checks, data = dat)
+}
+
+validate_level_4_names <- function(dat) {
+  checks <- list()
+  nms <- names(dat)
+
+  if (is_unique(nms)) {
+    checks[[length(checks) + 1]] <- make_check(
+      4, "unique_names", "Unique variable names",
+      "pass",
+      "All variable names are unique."
+    )
+  } else {
+    dupes <- unique(nms[duplicated(nms)])
+    checks[[length(checks) + 1]] <- make_check(
+      4, "unique_names", "Unique variable names",
+      "fail",
+      "Duplicate variable names were found.",
+      details = paste(dupes, collapse = ", ")
+    )
+  }
+
+  syntactic <- vapply(nms, syntactic_name_ok, logical(1))
+  if (all(syntactic)) {
+    checks[[length(checks) + 1]] <- make_check(
+      4, "syntactic_names", "Syntactic variable names",
+      "pass",
+      "All variable names are syntactic."
+    )
+  } else {
+    bad <- nms[!syntactic]
+    suggestions <- paste0(bad, " → ", make.names(bad))
+    checks[[length(checks) + 1]] <- make_check(
+      4, "syntactic_names", "Syntactic variable names",
+      "warn",
+      "Some variable names are not syntactic.",
+      details = paste(suggestions, collapse = "; ")
+    )
+  }
+
+  checks
+}
+
+validate_level_5_datetime <- function(dat) {
+  checks <- list()
+  classes <- vapply(dat, function(x) class(x)[1], character(1))
+
+  posix_cols <- names(classes)[classes %in% c("POSIXct", "POSIXlt")]
+  if (length(posix_cols) > 0) {
+    checks[[length(checks) + 1]] <- make_check(
+      5, "posix_detected", "Datetime column detected",
+      "pass",
+      paste0("Detected POSIX datetime column(s): ", paste(posix_cols, collapse = ", "), ".")
+    )
+  } else {
+    char_cols <- names(classes)[classes %in% c("character", "vroom_chr")]
+    parsed_hits <- character(0)
+    if (length(char_cols) > 0) {
+      for (nm in char_cols) {
+        vals <- dat[[nm]]
+        vals <- vals[!is.na(vals) & nzchar(vals)]
+        vals <- head(vals, 2000L)
+        if (length(vals) == 0) next
+        parsed <- parse_posix_utc(vals)
+        frac <- mean(!is.na(parsed))
+        if (isTRUE(frac > 0.9)) parsed_hits <- c(parsed_hits, nm)
+      }
+    }
+
+    if (length(parsed_hits) > 0) {
+      checks[[length(checks) + 1]] <- make_check(
+        5, "posix_detected", "Datetime-like column detected",
+        "warn",
+        paste0("No POSIXct column was auto-detected, but these columns look parseable as UTC datetimes: ", paste(parsed_hits, collapse = ", "), ".")
+      )
+    } else {
+      checks[[length(checks) + 1]] <- make_check(
+        5, "posix_detected", "Datetime column detected",
+        "fail",
+        "No POSIXct column was auto-detected and no clearly parseable datetime-like column was found."
+      )
+    }
+  }
+
+  if ("Datetime" %in% names(dat)) {
+    checks[[length(checks) + 1]] <- make_check(
+      5, "datetime_name", "Suggested timestamp name",
+      "pass",
+      "A column named 'Datetime' is present."
+    )
+  } else {
+    possible <- grep("date|time|datetime|timestamp", names(dat), ignore.case = TRUE, value = TRUE)
+    details <- if (length(possible)) paste(possible, collapse = ", ") else NULL
+    checks[[length(checks) + 1]] <- make_check(
+      5, "datetime_name", "Suggested timestamp name",
+      "warn",
+      "No column named 'Datetime' was found. This is recommended for interoperability.",
+      details = details
+    )
+  }
+
+  checks
+}
+
+validate_level_6_temporal <- function(dat) {
+  checks <- list()
+  dt_col <- NULL
+
+  if ("Datetime" %in% names(dat)) {
+    dt_col <- "Datetime"
+  } else {
+    posix_cols <- names(dat)[vapply(dat, function(x) inherits(x, "POSIXt"), logical(1))]
+    if (length(posix_cols) > 0) dt_col <- posix_cols[1]
+  }
+
+  if (is.null(dt_col)) {
+    checks[[length(checks) + 1]] <- make_check(
+      6, "temporal_checks", "Temporal validation",
+      "info",
+      "Temporal validation was skipped because no timestamp column could be identified."
+    )
+    return(checks)
+  }
+
+  x <- dat[[dt_col]]
+  if (!inherits(x, "POSIXt")) {
+    parsed <- parse_posix_utc(as.character(x))
+    if (sum(!is.na(parsed)) == 0) {
+      checks[[length(checks) + 1]] <- make_check(
+        6, "temporal_checks", "Temporal validation",
+        "fail",
+        paste0("The candidate timestamp column '", dt_col, "' could not be parsed as UTC datetimes.")
+      )
+      return(checks)
+    }
+    x <- parsed
+  }
+
+  non_missing <- !is.na(x)
+  x2 <- x[non_missing]
+
+  if (length(x2) < 2) {
+    checks[[length(checks) + 1]] <- make_check(
+      6, "enough_timestamps", "Sufficient timestamps",
+      "warn",
+      "Fewer than two valid timestamps are available, so spacing cannot be assessed."
+    )
+    return(checks)
+  }
+
+  is_sorted <- !is.unsorted(x2, strictly = FALSE)
+  checks[[length(checks) + 1]] <- make_check(
+    6, "sorted_time", "Ascending timestamp order",
+    if (is_sorted) "pass" else "warn",
+    if (is_sorted) "Timestamps are in ascending order." else "Timestamps are not in ascending order."
+  )
+
+  any_dupes <- any(duplicated(x2))
+  checks[[length(checks) + 1]] <- make_check(
+    6, "unique_time", "Unique timestamps",
+    if (!any_dupes) "pass" else "warn",
+    if (!any_dupes) "All non-missing timestamps are unique." else "Duplicate timestamps were found."
+  )
+
+  dx <- as.numeric(diff(x2), units = "secs")
+  dx <- dx[!is.na(dx)]
+  if (length(dx) == 0) {
+    checks[[length(checks) + 1]] <- make_check(
+      6, "spacing_regular", "Regular observation spacing",
+      "warn",
+      "Timestamp intervals could not be assessed."
+    )
+    return(checks)
+  }
+
+  tab <- sort(table(dx), decreasing = TRUE)
+  modal_step <- as.numeric(names(tab)[1])
+  regular <- length(unique(dx)) == 1
+
+  msg <- if (regular) {
+    paste0("Observation spacing is regular at ", modal_step, " second(s).")
+  } else {
+    paste0("Observation spacing is not fully regular. Most common interval: ", modal_step, " second(s).")
+  }
+
+  details <- paste0("Unique interval counts (seconds): ", paste(paste(names(tab), tab, sep = "→"), collapse = ", "))
+
+  checks[[length(checks) + 1]] <- make_check(
+    6, "spacing_regular", "Regular observation spacing",
+    if (regular) "pass" else "warn",
+    msg,
+    details = details
+  )
+
+  checks
+}
+
+validate_level_7_content <- function(dat) {
+  checks <- list()
+
+  if (ncol(dat) == 1) {
+    checks[[length(checks) + 1]] <- make_check(
+      7, "single_column_import", "Single imported column",
+      "fail",
+      "The file imported as a single column. This strongly suggests an incorrect separator or malformed structure."
+    )
+  } else {
+    checks[[length(checks) + 1]] <- make_check(
+      7, "single_column_import", "Single imported column",
+      "pass",
+      paste0("The file imported as ", ncol(dat), " columns.")
+    )
+  }
+
+  if ("Datetime" %in% names(dat)) {
+    vals <- as.character(dat$Datetime)
+    vals <- vals[!is.na(vals) & nzchar(vals)]
+    if (length(vals) > 0) {
+      z_frac <- mean(grepl("Z$", vals))
+      checks[[length(checks) + 1]] <- make_check(
+        7, "utc_suffix", "UTC Z suffix in Datetime",
+        if (isTRUE(z_frac > 0.95)) "pass" else "warn",
+        if (isTRUE(z_frac > 0.95)) {
+          "Most Datetime values end with 'Z', consistent with UTC representation."
+        } else {
+          "Many Datetime values do not end with 'Z'. UTC with explicit 'Z' is recommended."
+        }
+      )
+    }
+  }
+
+  checks
+}
+
+run_all_validations <- function(path) {
+  lines <- safe_read_lines(path, n = 5000L)
+
+  out <- list()
+  out$level_1 <- validate_level_1_file(path)
+  out$level_2 <- validate_level_2_lines(lines, path)
+
+  imported <- validate_level_3_import(path, delim = ",")
+  out$level_3 <- imported$checks
+  dat <- imported$data
+
+  if (!is.null(dat)) {
+    out$level_4 <- validate_level_4_names(dat)
+    out$level_5 <- validate_level_5_datetime(dat)
+    out$level_6 <- validate_level_6_temporal(dat)
+    out$level_7 <- validate_level_7_content(dat)
+  } else {
+    out$level_4 <- list()
+    out$level_5 <- list()
+    out$level_6 <- list()
+    out$level_7 <- list()
+  }
+
+  out$data <- dat
+  out$lines <- lines
+  out
+}
+
+flatten_checks <- function(results) {
+  lvls <- grep("^level_", names(results), value = TRUE)
+  unlist(results[lvls], recursive = FALSE)
+}
+
+check_card_ui <- function(chk) {
+  div(
+    class = paste("card border-", status_class(chk$status), " mb-3"),
+    div(
+      class = paste("card-header bg-", status_class(chk$status), " text-white"),
+      tags$strong(paste(status_icon(chk$status), chk$title))
+    ),
+    div(
+      class = "card-body",
+      tags$p(class = "card-text", chk$message),
+      if (!is.null(chk$details)) {
+        tags$details(
+          tags$summary("Details"),
+          tags$pre(style = "white-space: pre-wrap;", chk$details)
+        )
+      }
+    )
+  )
+}
+
+level_panel_ui <- function(level_title, checks) {
+  tagList(
+    tags$h4(level_title),
+    if (length(checks) == 0) {
+      div(class = "alert alert-light", "No checks available at this stage.")
+    } else {
+      lapply(checks, check_card_ui)
+    }
+  )
+}
+
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      body { padding-bottom: 40px; }
+      .sidebar-note { font-size: 0.95rem; color: #555; }
+      .preview-box {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 12px;
+        background: #fafafa;
+        max-height: 340px;
+        overflow-y: auto;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
+    "))
+  ),
+  titlePanel("Wearable CSV Validator"),
+  fluidRow(
+    column(
+      width = 3,
+      fileInput(
+        "file",
+        "Upload a wearable CSV file",
+        accept = c(".csv", ".txt", ".gz")
+      ),
+      checkboxInput("show_preview", "Show raw line preview", value = TRUE),
+      numericInput("preview_n", "Preview lines", value = 20, min = 5, max = 100, step = 5),
+      tags$p(
+        class = "sidebar-note",
+        "The validator performs staged checks: file access, text structure, import, variable names, datetime handling, and time-series regularity."
+      ),
+      hr(),
+      uiOutput("summary_box")
+    ),
+    column(
+      width = 9,
+      tabsetPanel(
+        tabPanel("Stage 1: File", uiOutput("level_1_ui")),
+        tabPanel("Stage 2: Structure", uiOutput("level_2_ui")),
+        tabPanel("Stage 3: Import", uiOutput("level_3_ui")),
+        tabPanel("Stage 4: Names", uiOutput("level_4_ui")),
+        tabPanel("Stage 5: Datetime", uiOutput("level_5_ui")),
+        tabPanel("Stage 6: Time series", uiOutput("level_6_ui")),
+        tabPanel("Stage 7: Content", uiOutput("level_7_ui")),
+        tabPanel("Data preview", tableOutput("data_preview")),
+        tabPanel("Raw lines", uiOutput("raw_preview"))
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  validation_results <- reactive({
+    req(input$file)
+    run_all_validations(input$file$datapath)
+  })
+
+  all_checks <- reactive({
+    flatten_checks(validation_results())
+  })
+
+  output$summary_box <- renderUI({
+    req(all_checks())
+    chks <- all_checks()
+    statuses <- vapply(chks, `[[`, character(1), "status")
+    counts <- table(factor(statuses, levels = c("pass", "warn", "fail", "info")))
+
+    div(
+      class = "card",
+      div(class = "card-header", tags$strong("Validation summary")),
+      div(
+        class = "card-body",
+        tags$p(paste("Pass:", counts["pass"] %||% 0)),
+        tags$p(paste("Warnings:", counts["warn"] %||% 0)),
+        tags$p(paste("Failures:", counts["fail"] %||% 0)),
+        tags$p(paste("Info:", counts["info"] %||% 0))
+      )
+    )
+  })
+
+  output$level_1_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 1: Basic file checks", validation_results()$level_1)
+  })
+
+  output$level_2_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 2: Text structure from readLines()", validation_results()$level_2)
+  })
+
+  output$level_3_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 3: Import with vroom()", validation_results()$level_3)
+  })
+
+  output$level_4_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 4: Variable names", validation_results()$level_4)
+  })
+
+  output$level_5_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 5: Datetime detection", validation_results()$level_5)
+  })
+
+  output$level_6_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 6: Temporal regularity", validation_results()$level_6)
+  })
+
+  output$level_7_ui <- renderUI({
+    req(validation_results())
+    level_panel_ui("Stage 7: Content conventions", validation_results()$level_7)
+  })
+
+  output$data_preview <- renderTable({
+    req(validation_results()$data)
+    head(as.data.frame(validation_results()$data), 10)
+  }, striped = TRUE, bordered = TRUE, hover = TRUE)
+
+  output$raw_preview <- renderUI({
+    req(validation_results())
+    if (!isTRUE(input$show_preview)) {
+      return(div(class = "alert alert-light", "Raw preview is disabled."))
+    }
+    lines <- head(validation_results()$lines, input$preview_n)
+    div(class = "preview-box", HTML(paste(escape_html(lines), collapse = "\n")))
+  })
+}
+
+shinyApp(ui, server)
