@@ -117,3 +117,18 @@ test_that("UTC suffix check reports preview-only info for truncated raw lines", 
   expect_equal(utc_check$status, "info")
   expect_match(utc_check$message, "preview-only")
 })
+
+test_that("build_data_preview keeps POSIXct display human-readable", {
+  app_env <- load_app_functions()
+
+  dat <- data.frame(
+    Datetime = as.POSIXct(c("2026-03-09 08:00:00", NA), tz = "UTC"),
+    value = c(1, 2)
+  )
+
+  preview <- app_env$build_data_preview(dat, n = 2)
+
+  expect_type(preview$Datetime, "character")
+  expect_equal(preview$Datetime[1], "2026-03-09 08:00:00 UTC")
+  expect_true(is.na(preview$Datetime[2]))
+})

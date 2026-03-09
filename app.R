@@ -172,6 +172,23 @@ extract_datetime_raw_z_fraction <- function(lines, datetime_col = "Datetime", de
 
 nice_n <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
 
+format_preview_column <- function(x) {
+  if (inherits(x, "POSIXt")) {
+    tz <- attr(x, "tzone")
+    tz <- if (length(tz) == 0 || is.na(tz[1]) || !nzchar(tz[1])) "UTC" else tz[1]
+    out <- format(x, tz = tz, usetz = TRUE)
+    out[is.na(x)] <- NA_character_
+    return(out)
+  }
+
+  x
+}
+
+build_data_preview <- function(data, n = 10L) {
+  preview <- head(as.data.frame(data), as.integer(n))
+  as.data.frame(lapply(preview, format_preview_column), stringsAsFactors = FALSE)
+}
+
 make_check <- function(level, id, title, status, message, details = NULL) {
   list(
     level = level,
@@ -887,7 +904,7 @@ server <- function(input, output, session) {
 
   output$data_preview <- renderTable({
     req(validation_results()$data)
-    head(as.data.frame(validation_results()$data), 10)
+    build_data_preview(validation_results()$data, n = 10)
   }, striped = TRUE, bordered = TRUE, hover = TRUE)
 
   output$raw_preview <- renderUI({
