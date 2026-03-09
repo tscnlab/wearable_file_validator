@@ -36,10 +36,37 @@ safe_read_lines <- function(path, n = 2000L) {
   readLines(con, n = n, warn = FALSE, encoding = "UTF-8")
 }
 
-safe_read_vroom <- function(path, delim = ",", n_max = Inf, altrep = TRUE) {
+parse_delimited_line <- function(line, delim = ",") {
+  if (is.na(line)) return(character(0))
+
+  parsed <- tryCatch(
+    utils::read.table(
+      text = line,
+      sep = delim,
+      quote = '"',
+      header = FALSE,
+      fill = TRUE,
+      comment.char = "",
+      stringsAsFactors = FALSE,
+      colClasses = "character"
+    ),
+    error = function(e) NULL
+  )
+
+  if (is.null(parsed)) {
+    return(strsplit(line, delim, fixed = TRUE)[[1]])
+  }
+
+  vals <- as.character(parsed[1, , drop = TRUE])
+  vals[is.na(vals)] <- ""
+  vals
+}
+
+safe_read_vroom <- function(path, delim = ",", n_max = Inf, altrep = TRUE, skip = 0L) {
   vroom::vroom(
     file = path,
     delim = delim,
+    skip = skip,
     altrep = altrep,
     show_col_types = FALSE,
     progress = FALSE,
@@ -48,6 +75,54 @@ safe_read_vroom <- function(path, delim = ",", n_max = Inf, altrep = TRUE) {
     num_threads = max(1, parallel::detectCores(logical = TRUE) - 1),
     n_max = n_max
   )
+}
+
+detect_header_skip <- function(lines, delim = ",", required_col = "Datetime", max_scan = 100L) {
+  if (length(lines) == 0) {
+    return(list(skip = 0L, header_line = NA_character_, reason = "No lines available."))
+  }
+
+  scan_n <- min(length(lines), as.integer(max_scan))
+  candidate_lines <- lines[seq_len(scan_n)]
+
+  split_line <- function(line) parse_delimited_line(line, delim = delim)
+  parts <- lapply(candidate_lines, split_line)
+
+  clean_fields <- lapply(parts, function(x) trimws(gsub('^"|"$', "", x)))
+
+  score_line <- function(fields) {
+    if (length(fields) < 2) return(-Inf)
+
+    non_missing <- fields[nzchar(fields)]
+    has_required <- required_col %in% fields
+    unique_non_missing <- length(unique(non_missing)) == length(non_missing)
+    syntactic_fraction <- if (length(non_missing) == 0) 0 else mean(vapply(non_missing, syntactic_name_ok, logical(1)))
+
+    (if (has_required) 3 else 0) +
+      (if (unique_non_missing) 1.5 else 0) +
+      syntactic_fraction +
+      min(length(fields) / 10, 2)
+  }
+
+  scores <- vapply(clean_fields, score_line, numeric(1))
+  valid <- which(is.finite(scores))
+
+  if (length(valid) == 0) {
+    return(list(skip = 0L, header_line = lines[1], reason = "No plausible header detected; defaulted to first line."))
+  }
+
+  best_ix <- valid[which.max(scores[valid])]
+  list(
+    skip = as.integer(best_ix - 1L),
+    header_line = lines[best_ix],
+    reason = if (best_ix == 1L) "First line appears to be the header." else paste0("Detected likely header on line ", best_ix, ".")
+  )
+}
+
+skip_preamble_lines <- function(lines, skip = 0L) {
+  skip <- max(0L, as.integer(skip))
+  if (skip >= length(lines)) return(character(0))
+  lines[seq.int(skip + 1L, length(lines))]
 }
 
 parse_posix_utc <- function(x) {
@@ -65,7 +140,7 @@ fraction_has_utc_z <- function(x) {
 extract_datetime_raw_z_fraction <- function(lines, datetime_col = "Datetime", delim = ",") {
   if (length(lines) < 2) return(NULL)
 
-  split_line <- function(line) strsplit(line, delim, fixed = TRUE)[[1]]
+  split_line <- function(line) parse_delimited_line(line, delim = delim)
 
   header <- split_line(lines[1])
   col_ix <- which(header == datetime_col)[1]
@@ -164,7 +239,7 @@ validate_level_1_file <- function(path) {
   checks
 }
 
-validate_level_2_lines <- function(lines, path) {
+validate_level_2_lines <- function(lines, path, skip = 0L, skip_reason = NULL) {
   checks <- list()
 
   if (length(lines) == 0) {
@@ -181,6 +256,15 @@ validate_level_2_lines <- function(lines, path) {
     "pass",
     paste0("Successfully read ", nice_n(length(lines)), " initial lines for structural inspection.")
   )
+
+  if (isTRUE(skip > 0)) {
+    checks[[length(checks) + 1]] <- make_check(
+      2, "header_skip", "Preamble/header offset",
+      "info",
+      paste0("Skipped ", skip, " line(s) before header detection and structure checks."),
+      details = skip_reason
+    )
+  }
 
   header <- lines[1]
   guessed_sep <- guess_separator_from_header(header)
@@ -230,13 +314,13 @@ validate_level_2_lines <- function(lines, path) {
   checks
 }
 
-validate_level_3_import <- function(path, delim = ",") {
+validate_level_3_import <- function(path, delim = ",", skip = 0L) {
   checks <- list()
   dat <- NULL
   err <- NULL
 
   dat <- tryCatch(
-    safe_read_vroom(path, delim = delim),
+    safe_read_vroom(path, delim = delim, skip = skip),
     error = function(e) {
       err <<- conditionMessage(e)
       NULL
@@ -257,7 +341,11 @@ validate_level_3_import <- function(path, delim = ",") {
   checks[[length(checks) + 1]] <- make_check(
     3, "vroom_read", "Read with vroom",
     "pass",
-    paste0("The file was read successfully with vroom. Detected ", ncol(dat), " columns and ", nice_n(nrow(dat)), " rows.")
+    paste0(
+      "The file was read successfully with vroom",
+      if (skip > 0) paste0(" after skipping ", skip, " preamble line(s)") else "",
+      ". Detected ", ncol(dat), " columns and ", nice_n(nrow(dat)), " rows."
+    )
   )
 
   cls <- vapply(dat, function(x) class(x)[1], character(1))
@@ -468,7 +556,7 @@ validate_level_6_temporal <- function(dat) {
   checks
 }
 
-validate_level_7_content <- function(dat, lines = NULL) {
+validate_level_7_content <- function(dat, lines = NULL, lines_is_sample = FALSE) {
   checks <- list()
 
   if (ncol(dat) == 1) {
@@ -488,7 +576,7 @@ validate_level_7_content <- function(dat, lines = NULL) {
   if ("Datetime" %in% names(dat)) {
     raw_z <- extract_datetime_raw_z_fraction(lines)
 
-    if (!is.null(raw_z)) {
+    if (!is.null(raw_z) && !isTRUE(lines_is_sample)) {
       checks[[length(checks) + 1]] <- make_check(
         7, "utc_suffix", "UTC Z suffix in Datetime",
         if (isTRUE(raw_z$fraction > 0.95)) "pass" else "warn",
@@ -500,6 +588,16 @@ validate_level_7_content <- function(dat, lines = NULL) {
         details = paste0(
           "Checked ", nice_n(raw_z$n_non_missing),
           " non-missing raw Datetime values in column ", raw_z$col_ix, "."
+        )
+      )
+    } else if (!is.null(raw_z) && isTRUE(lines_is_sample)) {
+      checks[[length(checks) + 1]] <- make_check(
+        7, "utc_suffix", "UTC Z suffix in Datetime",
+        "info",
+        "UTC suffix estimation from raw lines is preview-only because the file is longer than the inspected slice.",
+        details = paste0(
+          "Preview estimate from ", nice_n(raw_z$n_non_missing),
+          " non-missing Datetime values: ", round(raw_z$fraction * 100, 1), "% with trailing Z/z."
         )
       )
     } else {
@@ -523,14 +621,25 @@ validate_level_7_content <- function(dat, lines = NULL) {
   checks
 }
 
-run_all_validations <- function(path) {
-  lines <- safe_read_lines(path, n = 5000L)
+run_all_validations <- function(path, skip_lines = NULL, auto_detect_skip = TRUE) {
+  raw_lines_preview <- safe_read_lines(path, n = 5001L)
+  lines_is_sample <- length(raw_lines_preview) > 5000L
+  raw_lines <- if (lines_is_sample) raw_lines_preview[seq_len(5000L)] else raw_lines_preview
+
+  detected <- detect_header_skip(raw_lines)
+  effective_skip <- if (isTRUE(auto_detect_skip) && is.null(skip_lines)) {
+    detected$skip
+  } else {
+    max(0L, as.integer(skip_lines %||% 0L))
+  }
+
+  lines <- skip_preamble_lines(raw_lines, effective_skip)
 
   out <- list()
   out$level_1 <- validate_level_1_file(path)
-  out$level_2 <- validate_level_2_lines(lines, path)
+  out$level_2 <- validate_level_2_lines(lines, path, skip = effective_skip, skip_reason = detected$reason)
 
-  imported <- validate_level_3_import(path, delim = ",")
+  imported <- validate_level_3_import(path, delim = ",", skip = effective_skip)
   out$level_3 <- imported$checks
   dat <- imported$data
 
@@ -538,7 +647,7 @@ run_all_validations <- function(path) {
     out$level_4 <- validate_level_4_names(dat)
     out$level_5 <- validate_level_5_datetime(dat)
     out$level_6 <- validate_level_6_temporal(dat)
-    out$level_7 <- validate_level_7_content(dat, lines = lines)
+    out$level_7 <- validate_level_7_content(dat, lines = lines, lines_is_sample = lines_is_sample)
   } else {
     out$level_4 <- list()
     out$level_5 <- list()
@@ -548,6 +657,9 @@ run_all_validations <- function(path) {
 
   out$data <- dat
   out$lines <- lines
+  out$raw_lines <- raw_lines
+  out$skip_lines <- effective_skip
+  out$lines_is_sample <- lines_is_sample
   out
 }
 
@@ -651,6 +763,8 @@ ui <- fluidPage(
       ),
       checkboxInput("show_preview", "Show raw line preview", value = TRUE),
       numericInput("preview_n", "Preview lines", value = 20, min = 5, max = 100, step = 5),
+      checkboxInput("auto_skip_preamble", "Auto-detect and skip preamble lines", value = TRUE),
+      numericInput("manual_skip_lines", "Manual lines to skip before header", value = 0, min = 0, step = 1),
       tags$p(
         class = "sidebar-note",
         "The validator performs staged checks: file access, text structure, import, variable names, datetime handling, and time-series regularity."
@@ -668,7 +782,11 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   validation_results <- reactive({
     req(input$file)
-    run_all_validations(input$file$datapath)
+    run_all_validations(
+      input$file$datapath,
+      skip_lines = if (isTRUE(input$auto_skip_preamble)) NULL else input$manual_skip_lines,
+      auto_detect_skip = isTRUE(input$auto_skip_preamble)
+    )
   })
 
   all_checks <- reactive({
