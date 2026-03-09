@@ -36,11 +36,10 @@ safe_read_lines <- function(path, n = 2000L) {
   readLines(con, n = n, warn = FALSE, encoding = "UTF-8")
 }
 
-safe_read_vroom <- function(path, delim = ",", n_max = Inf, col_select = NULL, altrep = TRUE) {
+safe_read_vroom <- function(path, delim = ",", n_max = Inf, altrep = TRUE) {
   vroom::vroom(
     file = path,
     delim = delim,
-    col_select = col_select,
     altrep = altrep,
     show_col_types = FALSE,
     progress = FALSE,
@@ -206,6 +205,7 @@ validate_level_3_import <- function(path, delim = ",") {
     }
   )
 
+  
   if (is.null(dat)) {
     checks[[length(checks) + 1]] <- make_check(
       3, "vroom_read", "Read with vroom",
