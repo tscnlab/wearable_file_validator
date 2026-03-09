@@ -54,6 +54,44 @@ parse_posix_utc <- function(x) {
   suppressWarnings(as.POSIXct(x, tz = "UTC", format = "%Y-%m-%dT%H:%M:%OSZ"))
 }
 
+fraction_has_utc_z <- function(x) {
+  vals <- as.character(x)
+  vals <- trimws(vals)
+  vals <- vals[!is.na(vals) & nzchar(vals)]
+  if (length(vals) == 0) return(NA_real_)
+  mean(grepl("(?:Z|z)\\s*$", vals, perl = TRUE))
+}
+
+extract_datetime_raw_z_fraction <- function(lines, datetime_col = "Datetime", delim = ",") {
+  if (length(lines) < 2) return(NULL)
+
+  split_line <- function(line) strsplit(line, delim, fixed = TRUE)[[1]]
+
+  header <- split_line(lines[1])
+  col_ix <- which(header == datetime_col)[1]
+  if (is.na(col_ix)) return(NULL)
+
+  body <- lines[-1]
+  if (length(body) == 0) return(NULL)
+
+  dt_vals <- vapply(body, function(line) {
+    fields <- split_line(line)
+    if (length(fields) < col_ix) return(NA_character_)
+    val <- trimws(fields[col_ix])
+    val <- sub('^"', '', val)
+    sub('"$', '', val)
+  }, character(1))
+
+  dt_vals <- dt_vals[!is.na(dt_vals) & nzchar(dt_vals)]
+  if (length(dt_vals) == 0) return(NULL)
+
+  list(
+    fraction = mean(grepl("(?:Z|z)\\s*$", dt_vals, perl = TRUE)),
+    n_non_missing = length(dt_vals),
+    col_ix = col_ix
+  )
+}
+
 nice_n <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
 
 make_check <- function(level, id, title, status, message, details = NULL) {
@@ -430,7 +468,7 @@ validate_level_6_temporal <- function(dat) {
   checks
 }
 
-validate_level_7_content <- function(dat) {
+validate_level_7_content <- function(dat, lines = NULL) {
   checks <- list()
 
   if (ncol(dat) == 1) {
@@ -448,19 +486,37 @@ validate_level_7_content <- function(dat) {
   }
 
   if ("Datetime" %in% names(dat)) {
-    vals <- as.character(dat$Datetime)
-    vals <- vals[!is.na(vals) & nzchar(vals)]
-    if (length(vals) > 0) {
-      z_frac <- mean(grepl("Z$", vals))
+    raw_z <- extract_datetime_raw_z_fraction(lines)
+
+    if (!is.null(raw_z)) {
       checks[[length(checks) + 1]] <- make_check(
         7, "utc_suffix", "UTC Z suffix in Datetime",
-        if (isTRUE(z_frac > 0.95)) "pass" else "warn",
-        if (isTRUE(z_frac > 0.95)) {
-          "Most Datetime values end with 'Z', consistent with UTC representation."
+        if (isTRUE(raw_z$fraction > 0.95)) "pass" else "warn",
+        if (isTRUE(raw_z$fraction > 0.95)) {
+          "Most Datetime values end with 'Z' in the raw file, consistent with UTC representation."
         } else {
-          "Many Datetime values do not end with 'Z'. UTC with explicit 'Z' is recommended."
-        }
+          "Many Datetime values do not end with 'Z' in the raw file. UTC with explicit 'Z' is recommended."
+        },
+        details = paste0(
+          "Checked ", nice_n(raw_z$n_non_missing),
+          " non-missing raw Datetime values in column ", raw_z$col_ix, "."
+        )
       )
+    } else {
+      datetime_values <- dat$Datetime
+      z_frac <- fraction_has_utc_z(datetime_values)
+      if (!is.na(z_frac)) {
+        checks[[length(checks) + 1]] <- make_check(
+          7, "utc_suffix", "UTC Z suffix in Datetime",
+          if (isTRUE(z_frac > 0.95)) "pass" else "warn",
+          if (isTRUE(z_frac > 0.95)) {
+            "Most Datetime values end with 'Z', consistent with UTC representation."
+          } else {
+            "Many Datetime values do not end with 'Z'. UTC with explicit 'Z' is recommended."
+          },
+          details = "Raw Datetime extraction was unavailable; suffix check was performed on imported Datetime values."
+        )
+      }
     }
   }
 
@@ -482,7 +538,7 @@ run_all_validations <- function(path) {
     out$level_4 <- validate_level_4_names(dat)
     out$level_5 <- validate_level_5_datetime(dat)
     out$level_6 <- validate_level_6_temporal(dat)
-    out$level_7 <- validate_level_7_content(dat)
+    out$level_7 <- validate_level_7_content(dat, lines = lines)
   } else {
     out$level_4 <- list()
     out$level_5 <- list()
@@ -512,12 +568,28 @@ check_card_ui <- function(chk) {
       tags$p(class = "card-text", chk$message),
       if (!is.null(chk$details)) {
         tags$details(
+          class = "details-toggle",
           tags$summary("Details"),
           tags$pre(style = "white-space: pre-wrap;", chk$details)
         )
       }
     )
   )
+}
+
+worst_status <- function(checks) {
+  if (length(checks) == 0) return("info")
+  statuses <- vapply(checks, `[[`, character(1), "status")
+  if ("fail" %in% statuses) return("fail")
+  if ("warn" %in% statuses) return("warn")
+  if ("pass" %in% statuses) return("pass")
+  "info"
+}
+
+level_tab_title <- function(stage_title, checks) {
+  status <- worst_status(checks)
+  count <- length(checks)
+  paste0(status_icon(status), " ", stage_title, " (", count, ")")
 }
 
 level_panel_ui <- function(level_title, checks) {
@@ -535,20 +607,40 @@ ui <- fluidPage(
   tags$head(
     tags$style(HTML("
       body { padding-bottom: 40px; }
+      .main-title { font-weight: 700; margin-bottom: 0.8rem; }
       .sidebar-note { font-size: 0.95rem; color: #555; }
       .preview-box {
-        border: 1px solid #ddd;
-        border-radius: 6px;
+        border: 1px solid #d9e0ea;
+        border-radius: 8px;
         padding: 12px;
-        background: #fafafa;
+        background: #f8fbff;
         max-height: 340px;
         overflow-y: auto;
         font-family: monospace;
         white-space: pre-wrap;
       }
+      .card {
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(12, 28, 48, 0.08);
+      }
+      .details-toggle {
+        margin-top: 0.5rem;
+        border: 1px dashed #b5c2d3;
+        border-radius: 8px;
+        padding: 0.5rem 0.65rem;
+        background: #f8fbff;
+      }
+      .details-toggle > summary {
+        font-weight: 700;
+        color: #0d6efd;
+        cursor: pointer;
+      }
+      .details-toggle > summary:hover {
+        text-decoration: underline;
+      }
     "))
   ),
-  titlePanel("Wearable CSV Validator"),
+  tags$h2(class = "main-title", "Wearable CSV Validator"),
   fluidRow(
     column(
       width = 3,
@@ -568,17 +660,7 @@ ui <- fluidPage(
     ),
     column(
       width = 9,
-      tabsetPanel(
-        tabPanel("Stage 1: File", uiOutput("level_1_ui")),
-        tabPanel("Stage 2: Structure", uiOutput("level_2_ui")),
-        tabPanel("Stage 3: Import", uiOutput("level_3_ui")),
-        tabPanel("Stage 4: Names", uiOutput("level_4_ui")),
-        tabPanel("Stage 5: Datetime", uiOutput("level_5_ui")),
-        tabPanel("Stage 6: Time series", uiOutput("level_6_ui")),
-        tabPanel("Stage 7: Content", uiOutput("level_7_ui")),
-        tabPanel("Data preview", tableOutput("data_preview")),
-        tabPanel("Raw lines", uiOutput("raw_preview"))
-      )
+      uiOutput("results_tabs")
     )
   )
 )
@@ -610,6 +692,32 @@ server <- function(input, output, session) {
         tags$p(paste("Info:", counts["info"] %||% 0))
       )
     )
+  })
+
+  output$results_tabs <- renderUI({
+    base_tabs <- list(
+      tabPanel("Data preview", tableOutput("data_preview")),
+      tabPanel("Raw lines", uiOutput("raw_preview"))
+    )
+
+    if (is.null(input$file)) {
+      return(do.call(tabsetPanel, c(list(id = "validation_tabs"), base_tabs)))
+    }
+
+    results <- validation_results()
+    do.call(tabsetPanel, c(
+      list(
+        id = "validation_tabs",
+        tabPanel(level_tab_title("Stage 1: File", results$level_1), uiOutput("level_1_ui")),
+        tabPanel(level_tab_title("Stage 2: Structure", results$level_2), uiOutput("level_2_ui")),
+        tabPanel(level_tab_title("Stage 3: Import", results$level_3), uiOutput("level_3_ui")),
+        tabPanel(level_tab_title("Stage 4: Names", results$level_4), uiOutput("level_4_ui")),
+        tabPanel(level_tab_title("Stage 5: Datetime", results$level_5), uiOutput("level_5_ui")),
+        tabPanel(level_tab_title("Stage 6: Time series", results$level_6), uiOutput("level_6_ui")),
+        tabPanel(level_tab_title("Stage 7: Content", results$level_7), uiOutput("level_7_ui"))
+      ),
+      base_tabs
+    ))
   })
 
   output$level_1_ui <- renderUI({
