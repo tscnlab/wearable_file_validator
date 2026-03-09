@@ -2,6 +2,8 @@ library(shiny)
 library(vroom)
 library(tools)
 
+options(shiny.maxRequestSize = 20 * 1024^2)
+
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
 escape_html <- function(x) {
@@ -31,7 +33,8 @@ guess_separator_from_header <- function(header_line) {
 }
 
 safe_read_lines <- function(path, n = 2000L) {
-  con <- file(path, open = "rb")
+  is_gz <- identical(tolower(file_ext(path)), "gz")
+  con <- if (is_gz) gzfile(path, open = "rt") else file(path, open = "rb")
   on.exit(close(con), add = TRUE)
   readLines(con, n = n, warn = FALSE, encoding = "UTF-8")
 }
@@ -626,7 +629,16 @@ run_all_validations <- function(path, skip_lines = NULL, auto_detect_skip = TRUE
   lines_is_sample <- length(raw_lines_preview) > 5000L
   raw_lines <- if (lines_is_sample) raw_lines_preview[seq_len(5000L)] else raw_lines_preview
 
-  detected <- detect_header_skip(raw_lines)
+  can_auto_detect <- isTRUE(auto_detect_skip) && !identical(tolower(file_ext(path)), "gz")
+  detected <- if (can_auto_detect) detect_header_skip(raw_lines) else list(
+    skip = 0L,
+    header_line = if (length(raw_lines) > 0) raw_lines[1] else NA_character_,
+    reason = if (identical(tolower(file_ext(path)), "gz")) {
+      "Auto-detection was disabled for compressed input; defaulted to first line unless manual skip is provided."
+    } else {
+      "Auto-detection disabled; defaulted to first line unless manual skip is provided."
+    }
+  )
   effective_skip <- if (isTRUE(auto_detect_skip) && is.null(skip_lines)) {
     detected$skip
   } else {
@@ -883,7 +895,7 @@ server <- function(input, output, session) {
     if (!isTRUE(input$show_preview)) {
       return(div(class = "alert alert-light", "Raw preview is disabled."))
     }
-    lines <- head(validation_results()$lines, input$preview_n)
+    lines <- head(validation_results()$raw_lines, input$preview_n)
     div(class = "preview-box", HTML(paste(escape_html(lines), collapse = "\n")))
   })
 }
