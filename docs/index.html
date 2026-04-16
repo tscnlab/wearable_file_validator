@@ -129,7 +129,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 </header><section id="preface" class="level2"><h2 class="anchored" data-anchor-id="preface">Preface</h2>
-<p>MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described <a href="https://link.springer.com/article/10.1186/s44247-024-00113-9">in this publication</a>, separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study.</p>
+<p>MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described <a href="https://link.springer.com/article/10.1186/s44247-024-00113-9">in this publication</a>, separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the <a href="https://tscnlab.github.io/glc_dp_viewer/">Global Light Commons (GLC) website</a>.</p>
 <p>This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.</p>
 <p>For the MeLiDos analysis package <a href="https://tscnlab.github.io/LightLogR/">LightLogR</a>, we reviewed file formats from 19 devices and found substantial variation in both file structure and preprocessing requirements. Moving forward, we encourage device manufacturers to standardize wearable export formats and to adopt the dual structure of data plus metadata, even if only part of the metadata is embedded directly with the export.</p>
 <div class="cell">
@@ -254,7 +254,7 @@ Note
 </div>
 </section><section id="headers" class="level3"><h3 class="anchored" data-anchor-id="headers">Headers</h3>
 <p>Each file must contain exactly one header row containing the variable names. Data records begin on the following row.</p>
-<p>Additional non-tabular header lines above the column names are discouraged. If such lines are unavoidable, their number and content format must be consistent across files from the same device model and software version, and they must be documented in the metadata descriptor.</p>
+<p>Additional lines above the column names are strongly discouraged. In fact, the file validation in the <a href="https://tscnlab.github.io/glc_dp_viewer/">Global Light Commons (GLC)</a> only supports data files without additional headers.</p>
 <div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
@@ -1191,7 +1191,7 @@ ui &lt;- fluidPage(
       width = 3,
       fileInput(
         "file",
-        "Upload a wearable CSV file",
+        "Upload a wearable CSV file (max 20 MB)",
         accept = c(".csv", ".txt", ".gz")
       ),
       checkboxInput("show_preview", "Show raw line preview", value = TRUE),
@@ -1795,7 +1795,7 @@ shinyApp(ui, server)
 <span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="fu">## Preface</span></span>
 <span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described <span class="co">[</span><span class="ot">in this publication</span><span class="co">](https://link.springer.com/article/10.1186/s44247-024-00113-9)</span>, separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study.</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described <span class="co">[</span><span class="ot">in this publication</span><span class="co">](https://link.springer.com/article/10.1186/s44247-024-00113-9)</span>, separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the <span class="co">[</span><span class="ot">Global Light Commons (GLC) website</span><span class="co">](https://tscnlab.github.io/glc_dp_viewer/)</span>.</span>
 <span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.</span>
 <span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a></span>
@@ -1888,7 +1888,7 @@ shinyApp(ui, server)
 <span id="cb4-113"><a href="#cb4-113" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-114"><a href="#cb4-114" aria-hidden="true" tabindex="-1"></a>Each file must contain exactly one header row containing the variable names. Data records begin on the following row.</span>
 <span id="cb4-115"><a href="#cb4-115" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-116"><a href="#cb4-116" aria-hidden="true" tabindex="-1"></a>Additional non-tabular header lines above the column names are discouraged. If such lines are unavoidable, their number and content format must be consistent across files from the same device model and software version, and they must be documented in the metadata descriptor.</span>
+<span id="cb4-116"><a href="#cb4-116" aria-hidden="true" tabindex="-1"></a>Additional lines above the column names are strongly discouraged. In fact, the file validation in the <span class="co">[</span><span class="ot">Global Light Commons (GLC)</span><span class="co">](https://tscnlab.github.io/glc_dp_viewer/)</span> only supports data files without additional headers.</span>
 <span id="cb4-117"><a href="#cb4-117" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-118"><a href="#cb4-118" aria-hidden="true" tabindex="-1"></a>:::{.callout-note}</span>
 <span id="cb4-119"><a href="#cb4-119" aria-hidden="true" tabindex="-1"></a>Variable names should be <span class="co">[</span><span class="ot">`syntactic`</span><span class="co">](https://adv-r.hadley.nz/names-values.html#non-syntactic)</span> so that they can be imported directly into data analysis software without renaming.</span>
@@ -2813,7 +2813,7 @@ shinyApp(ui, server)
 <span id="cb4-1038"><a href="#cb4-1038" aria-hidden="true" tabindex="-1"></a><span class="st">      width = 3,</span></span>
 <span id="cb4-1039"><a href="#cb4-1039" aria-hidden="true" tabindex="-1"></a><span class="st">      fileInput(</span></span>
 <span id="cb4-1040"><a href="#cb4-1040" aria-hidden="true" tabindex="-1"></a><span class="st">        "file",</span></span>
-<span id="cb4-1041"><a href="#cb4-1041" aria-hidden="true" tabindex="-1"></a><span class="st">        "Upload a wearable CSV file",</span></span>
+<span id="cb4-1041"><a href="#cb4-1041" aria-hidden="true" tabindex="-1"></a><span class="st">        "Upload a wearable CSV file (max 20 MB)",</span></span>
 <span id="cb4-1042"><a href="#cb4-1042" aria-hidden="true" tabindex="-1"></a><span class="st">        accept = c(".csv", ".txt", ".gz")</span></span>
 <span id="cb4-1043"><a href="#cb4-1043" aria-hidden="true" tabindex="-1"></a><span class="st">      ),</span></span>
 <span id="cb4-1044"><a href="#cb4-1044" aria-hidden="true" tabindex="-1"></a><span class="st">      checkboxInput("show_preview", "Show raw line preview", value = TRUE),</span></span>

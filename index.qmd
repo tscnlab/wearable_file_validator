@@ -16,7 +16,7 @@ filters:
 
 ## Preface
 
-MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study.
+MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the [Global Light Commons (GLC) website](https://tscnlab.github.io/glc_dp_viewer/).
 
 This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.
 
@@ -109,7 +109,7 @@ In such cases, three approaches can preserve a rectangular structure:
 
 Each file must contain exactly one header row containing the variable names. Data records begin on the following row.
 
-Additional non-tabular header lines above the column names are discouraged. If such lines are unavoidable, their number and content format must be consistent across files from the same device model and software version, and they must be documented in the metadata descriptor.
+Additional lines above the column names are strongly discouraged. In fact, the file validation in the [Global Light Commons (GLC)](https://tscnlab.github.io/glc_dp_viewer/) only supports data files without additional headers.
 
 :::{.callout-note}
 Variable names should be [`syntactic`](https://adv-r.hadley.nz/names-values.html#non-syntactic) so that they can be imported directly into data analysis software without renaming.
@@ -1034,7 +1034,7 @@ ui <- fluidPage(
       width = 3,
       fileInput(
         "file",
-        "Upload a wearable CSV file",
+        "Upload a wearable CSV file (max 20 MB)",
         accept = c(".csv", ".txt", ".gz")
       ),
       checkboxInput("show_preview", "Show raw line preview", value = TRUE),
