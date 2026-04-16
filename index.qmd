@@ -66,6 +66,8 @@ flowchart LR
 
 ## Data format considerations
 
+We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+
 ### Base format
 
 We recommend [comma-separated values (CSV)](https://www.rfc-editor.org/rfc/rfc4180) as the base format. See the [full specification](https://www.rfc-editor.org/rfc/rfc4180) for details. In summary:
@@ -238,7 +240,15 @@ A minimal interoperable export should therefore provide:
 - stable column names
 - metadata that defines variables, units, missingness rules, and time zone context
 
-## Validator
+## Validation
+
+### Example file
+
+We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+
+### Interactive validator
+
+This validator works up to file sizes of 10 MB.
 
 ::: {.column-page}
 
@@ -249,7 +259,7 @@ library(shiny)
 library(vroom)
 library(tools)
 
-options(shiny.maxRequestSize = 20 * 1024^2)
+options(shiny.maxRequestSize = 10 * 1024^2)
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
