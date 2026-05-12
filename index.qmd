@@ -1,5 +1,5 @@
 ---
-title: "A2.3.1 File format considerations"
+title: "File format considerations"
 author: 
   - name: "Johannes Zauner"
   - name: "Salma Thalji"
@@ -14,233 +14,9 @@ filters:
   - shinylive
 ---
 
-## Preface
+## Validator
 
-MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the [Global Light Commons (GLC) website](https://tscnlab.github.io/glc_dp_viewer/).
-
-This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.
-
-For the MeLiDos analysis package [LightLogR](https://tscnlab.github.io/LightLogR/), we reviewed file formats from 19 devices and found substantial variation in both file structure and preprocessing requirements. Moving forward, we encourage device manufacturers to standardize wearable export formats and to adopt the dual structure of data plus metadata, even if only part of the metadata is embedded directly with the export.
-
-```{r}
-#| message: false
-#| warning: false
-library(LightLogR)
-supported_devices()
-```
-
-This document focuses on the data part and summarizes relevant design considerations derived from existing formats. The goal is to optimize, across files and devices, for:
-
-- readability
-- consistency
-- unambiguity
-- machine-readability
-- cross-language interoperability
-
-:::{.callout-note}
-In this document, the term `record` is used interchangeably with `observation` and refers to one written row in an export file for a given time point or event.
-:::
-
-### Overview of the proposed format
-
-The proposed structure separates wearable exports into a simple tabular data file and a metadata descriptor. The data file contains the observations themselves, while the metadata descriptor defines how those observations should be interpreted.
-
-```{mermaid}
-flowchart LR
-    A[Wearable device export] --> B[Data file<br/>CSV]
-    A --> C[Metadata descriptor]
-
-    B --> B1[Rectangular rows and columns]
-    B --> B2[Single header row]
-    B --> B3[Canonical UTC timestamp<br/>Datetime]
-    B --> B4[Consistent dtypes per column]
-    B --> B5[Portable encoding and separators]
-
-    C --> C1[Variable definitions]
-    C --> C2[Units]
-    C --> C3[Device metadata]
-    C --> C4[Participant / study metadata]
-    C --> C5[Time zone and missing-data rules]
-
-```
-
-## Data format considerations
-
-We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
-
-### Base format
-
-We recommend [comma-separated values (CSV)](https://www.rfc-editor.org/rfc/rfc4180) as the base format. See the [full specification](https://www.rfc-editor.org/rfc/rfc4180) for details. In summary:
-
-- variables (columns) are separated by a single comma (`,`)
-- records (rows) are separated by line breaks
-- every row must contain the same number of fields
-- fields containing commas, double quotes, or line breaks must be enclosed in double quotes
-- double quotes inside quoted fields must be escaped according to CSV rules
-- rows must not end with a trailing comma
-
-For maximum interoperability across R, Python, spreadsheets, databases, and command-line tooling, exported files should additionally follow these requirements:
-
-- file encoding must be UTF-8
-- files should be written without a UTF-8 byte order mark (BOM)
-- line endings may be `LF` or `CRLF`, but must be used consistently within a file
-- the delimiter must always be a comma and must not vary by locale
-- decimal values must always use `.` as the decimal separator
-
-:::{.callout-warning}
-Exported files must not contain locale-dependent variations. The file format must remain identical regardless of the locale settings of the exporting computer.
-:::
-
-### Tabular data
-
-Wearable data are typically analyzed as time series. Such analyses are best supported by rectangular tabular data, with variables in columns and observations in rows. In rectangular data, each row has the same number of fields and each column represents the same variable throughout the file. Cells may be empty to indicate missing data, but the structure itself must not vary across rows.
-
-![Rectangular tabular data structure with a `tidy` arrangement. From [R for Data Science](https://r4ds.had.co.nz/tidy-data.html)](https://r4ds.had.co.nz/images/tidy-1.png)
-
-::: {.callout-note}
-This structure can be inefficient when not all variables are recorded for every observation. This may occur when a device contains multiple sensors or modalities sampled at different intervals, or when irregular event records occur (e.g., button presses).
-
-In such cases, three approaches can preserve a rectangular structure:
-
-- add an observation (row) that is empty for variables not recorded at that time point; this is appropriate when such cases are rare
-- aggregate irregular events into the next regular observation (e.g., store the number of button presses since the previous sample); this is appropriate when the recording interval is short and aggregation is scientifically acceptable
-- split the export into multiple rectangular files, for example one file per sensor or modality, or one file for regular samples and one for irregular events; this is appropriate when irregularity is common
-:::
-
-### Headers
-
-Each file must contain exactly one header row containing the variable names. Data records begin on the following row.
-
-Additional lines above the column names are strongly discouraged. In fact, the file validation in the [Global Light Commons (GLC)](https://tscnlab.github.io/glc_dp_viewer/) only supports data files without additional headers.
-
-:::{.callout-note}
-Variable names should be [`syntactic`](https://adv-r.hadley.nz/names-values.html#non-syntactic) so that they can be imported directly into data analysis software without renaming.
-
-For best interoperability across R and Python, variable names should:
-
-- use only ASCII letters (`a-z`, `A-Z`), digits (`0-9`), `_`, and `.`
-- start with a letter
-- avoid spaces and special characters
-- not start with a digit
-- not duplicate any other column name within the file
-- avoid reserved words in common analysis environments where possible
-
-For easier ingestion into both R and Python data pipelines, `snake_case` is recommended for general variables. A documented exception may be used for canonical field names such as `Datetime`.
-:::
-
-### Consistency of variables
-
-Within a column, values must be consistent with the declared variable type. Otherwise, users must manually correct types after import, which introduces avoidable error sources.
-
-General requirements:
-
-- a column must contain values of one logical type only (e.g., numeric, integer, string, boolean, datetime)
-- numeric values may contain only digits, an optional leading minus sign, and the decimal separator
-- `.` must be used as the decimal separator, independent of locale
-- thousands separators must not be used
-- text values containing commas, double quotes, or line breaks must be quoted according to the CSV specification
-- missing values should be encoded as empty fields rather than implementation-specific strings where possible
-
-Recommended canonical encodings:
-
-- boolean values: `true` and `false`
-- missing values: empty field
-- categorical values: documented controlled vocabulary in metadata
-- units: defined in metadata, not embedded in the cell value
-
-Python-specific interoperability requirements:
-
-- columns should not mix numeric values with strings such as `error`, `off`, or `n/a`
-- vendor-specific missing-value strings such as `NA`, `N/A`, `null`, `NULL`, `-`, or `9999` should be avoided in raw exports unless they are explicitly documented in metadata
-- if integer columns can contain missing values, this must be documented, as some Python tooling may otherwise infer floating-point types during import
-- where practical, one physical quantity should map to one column and one dtype
-
-:::{.callout-note}
-#### On sentinel values
-
-Some devices use sentinel values to indicate special information, like `sleep`, or `out of bounds`. This behavior is discouraged within the same column as other (measurement) information is contained. Instead, a new variable containing the status information (if necessary as a sentinal value) should be used and the measurement column be set to missing for a given observation.
-
-:::
-
-### Record ordering and uniqueness
-
-Records should be ordered by ascending timestamp within each file and timestamps need to be unique.
-
-If a file represents a single continuous stream, each row should be uniquely identifiable by the timestamp.
-
-### Timestamps
-
-Timestamps in wearable data must contain date and time information in a consistent, unambiguous, and machine-readable format. Because time handling is complex, timestamps require special care.
-
-A time zone should not be confused with a UTC offset. For any given moment, a time zone maps to a specific offset, but a time zone also captures daylight saving time rules and policy changes. Therefore, local time plus time zone contains more information than local time plus offset alone.
-
-Date and time values should follow [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html). A practical internet profile is described in [RFC 3339, Section 5.6](https://datatracker.ietf.org/doc/html/rfc3339#section-5.6).
-
-At the time of writing, many devices do not include UTC offsets in exported timestamps, which can create ambiguity around daylight saving transitions. This ambiguity can be avoided if:
-
-- datetimes follow ISO 8601 / RFC 3339 conventions
-- timestamps in the data file are stored in UTC
-- UTC timestamps are encoded with the `Z` suffix (for example, `2026-03-09T14:30:00Z`)
-- the participant's or device's local time zone is stored in metadata using an [IANA time zone identifier](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) such as `Europe/Berlin`
-
-Recommended practice:
-
-- include one canonical timestamp column named `Datetime`
-- store `Datetime` in UTC in full datetime format with seconds
-- if sub-second precision is available and scientifically relevant, use a fixed precision consistently throughout the file
-- do not mix naive local timestamps and UTC timestamps in the same column
-- if a local device timestamp is required in addition to UTC, store it in a separate column and document it clearly in metadata
-
-:::{.callout-note}
-Time-series analysis often requires a regularly spaced, uninterrupted time series. Manufacturers can support researchers in a major way by ensuring that observations are stored in regular and consistent intervals (e.g., every 60 seconds), and that gaps in the data collection are explicit (i.e., timestamped missing data).
-:::
-
-### Missing data
-
-Missing data should be represented explicitly and consistently.
-
-Requirements:
-
-- a missing value must not change the number of fields in a row
-- missing values should be encoded as empty fields
-- the meaning of missingness should be documented in metadata where relevant (e.g., sensor saturation, device off-body, battery depletion, or processing failure)
-
-If a distinction between different types of missingness is scientifically required, that distinction should be represented in separate status or quality-control columns rather than by mixing ad hoc string tokens into measurement columns.
-
-### Complex data
-
-In some cases, wearable device output is too complex to be fully represented in a single CSV file. Examples include images, videos, binary sensor payloads, or unavoidable proprietary sidecar files.
-
-In such cases, the CSV file should contain:
-
-- a timestamp column representing the relevant time point or start time
-- a file reference column containing the file name or relative path of the associated object
-- any required modality or event-type columns needed to interpret the referenced file
-
-Associated files should be stored in a documented directory structure and described in metadata. File references should be relative rather than absolute so that datasets remain portable across systems.
-
-### Python-specific implementation notes
-
-The requirements above are language-agnostic, but the following conventions are especially important for robust Python ingestion with tools such as `pandas`, `polars`, and `pyarrow`:
-
-- UTF-8 encoding should be used consistently
-- column names should be unique and stable across software versions
-- each column should have a single intended dtype
-- datetimes should be parseable without custom locale settings
-- delimiters, decimal separators, and missing-value encodings should be fixed across all exports from a device family
-- very large files may optionally be distributed in compressed form (e.g., `.csv.gz`) provided the contained file remains a standards-compliant CSV
-- schema changes between firmware or software versions should be versioned and documented in metadata
-
-A minimal interoperable export should therefore provide:
-
-- one CSV file with a single header row
-- UTF-8 encoding
-- one canonical UTC timestamp column named `Datetime`
-- consistent rectangular rows
-- stable column names
-- metadata that defines variables, units, missingness rules, and time zone context
-
-## Validation
+The following application runs in your browser. Datasets you provide will not be uploaded outside your computer and thus ensure privacy. Please see the sections below for more context on the validator.
 
 ### Example file
 
@@ -1179,3 +955,233 @@ shinyApp(ui, server)
 ```
 
 :::
+
+
+## Preface
+
+The [MeLiDos](www.melidos.eu) project aims for standardized *Metrology for wearable light loggers and optical radiation dosimeters*.
+
+MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the [Global Light Commons (GLC) website](https://tscnlab.github.io/glc_dp_viewer/).
+
+This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.
+
+For the MeLiDos analysis package [LightLogR](https://tscnlab.github.io/LightLogR/), we reviewed file formats from 19 devices and found substantial variation in both file structure and preprocessing requirements. Moving forward, we encourage device manufacturers to standardize wearable export formats and to adopt the dual structure of data plus metadata, even if only part of the metadata is embedded directly with the export.
+
+```{r}
+#| message: false
+#| warning: false
+library(LightLogR)
+supported_devices()
+```
+
+This document focuses on the data part and summarizes relevant design considerations derived from existing formats. The goal is to optimize, across files and devices, for:
+
+- readability
+- consistency
+- unambiguity
+- machine-readability
+- cross-language interoperability
+
+:::{.callout-note}
+In this document, the term `record` is used interchangeably with `observation` and refers to one written row in an export file for a given time point or event.
+:::
+
+### Overview of the proposed format
+
+The proposed structure separates wearable exports into a simple tabular data file and a metadata descriptor. The data file contains the observations themselves, while the metadata descriptor defines how those observations should be interpreted.
+
+```{mermaid}
+flowchart LR
+    A[Wearable device export] --> B[Data file<br/>CSV]
+    A --> C[Metadata descriptor]
+
+    B --> B1[Rectangular rows and columns]
+    B --> B2[Single header row]
+    B --> B3[Canonical UTC timestamp<br/>Datetime]
+    B --> B4[Consistent dtypes per column]
+    B --> B5[Portable encoding and separators]
+
+    C --> C1[Variable definitions]
+    C --> C2[Units]
+    C --> C3[Device metadata]
+    C --> C4[Participant / study metadata]
+    C --> C5[Time zone and missing-data rules]
+
+```
+
+## Data format considerations
+
+We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+
+### Base format
+
+We recommend [comma-separated values (CSV)](https://www.rfc-editor.org/rfc/rfc4180) as the base format. See the [full specification](https://www.rfc-editor.org/rfc/rfc4180) for details. In summary:
+
+- variables (columns) are separated by a single comma (`,`)
+- records (rows) are separated by line breaks
+- every row must contain the same number of fields
+- fields containing commas, double quotes, or line breaks must be enclosed in double quotes
+- double quotes inside quoted fields must be escaped according to CSV rules
+- rows must not end with a trailing comma
+
+For maximum interoperability across R, Python, spreadsheets, databases, and command-line tooling, exported files should additionally follow these requirements:
+
+- file encoding must be UTF-8
+- files should be written without a UTF-8 byte order mark (BOM)
+- line endings may be `LF` or `CRLF`, but must be used consistently within a file
+- the delimiter must always be a comma and must not vary by locale
+- decimal values must always use `.` as the decimal separator
+
+:::{.callout-warning}
+Exported files must not contain locale-dependent variations. The file format must remain identical regardless of the locale settings of the exporting computer.
+:::
+
+### Tabular data
+
+Wearable data are typically analyzed as time series. Such analyses are best supported by rectangular tabular data, with variables in columns and observations in rows. In rectangular data, each row has the same number of fields and each column represents the same variable throughout the file. Cells may be empty to indicate missing data, but the structure itself must not vary across rows.
+
+![Rectangular tabular data structure with a `tidy` arrangement. From [R for Data Science](https://r4ds.had.co.nz/tidy-data.html)](https://r4ds.had.co.nz/images/tidy-1.png)
+
+::: {.callout-note}
+This structure can be inefficient when not all variables are recorded for every observation. This may occur when a device contains multiple sensors or modalities sampled at different intervals, or when irregular event records occur (e.g., button presses).
+
+In such cases, three approaches can preserve a rectangular structure:
+
+- add an observation (row) that is empty for variables not recorded at that time point; this is appropriate when such cases are rare
+- aggregate irregular events into the next regular observation (e.g., store the number of button presses since the previous sample); this is appropriate when the recording interval is short and aggregation is scientifically acceptable
+- split the export into multiple rectangular files, for example one file per sensor or modality, or one file for regular samples and one for irregular events; this is appropriate when irregularity is common
+:::
+
+### Headers
+
+Each file must contain exactly one header row containing the variable names. Data records begin on the following row.
+
+Additional lines above the column names are strongly discouraged. In fact, the file validation in the [Global Light Commons (GLC)](https://tscnlab.github.io/glc_dp_viewer/) only supports data files without additional headers.
+
+:::{.callout-note}
+Variable names should be [`syntactic`](https://adv-r.hadley.nz/names-values.html#non-syntactic) so that they can be imported directly into data analysis software without renaming.
+
+For best interoperability across R and Python, variable names should:
+
+- use only ASCII letters (`a-z`, `A-Z`), digits (`0-9`), `_`, and `.`
+- start with a letter
+- avoid spaces and special characters
+- not start with a digit
+- not duplicate any other column name within the file
+- avoid reserved words in common analysis environments where possible
+
+For easier ingestion into both R and Python data pipelines, `snake_case` is recommended for general variables. A documented exception may be used for canonical field names such as `Datetime`.
+:::
+
+### Consistency of variables
+
+Within a column, values must be consistent with the declared variable type. Otherwise, users must manually correct types after import, which introduces avoidable error sources.
+
+General requirements:
+
+- a column must contain values of one logical type only (e.g., numeric, integer, string, boolean, datetime)
+- numeric values may contain only digits, an optional leading minus sign, and the decimal separator
+- `.` must be used as the decimal separator, independent of locale
+- thousands separators must not be used
+- text values containing commas, double quotes, or line breaks must be quoted according to the CSV specification
+- missing values should be encoded as empty fields rather than implementation-specific strings where possible
+
+Recommended canonical encodings:
+
+- boolean values: `true` and `false`
+- missing values: empty field
+- categorical values: documented controlled vocabulary in metadata
+- units: defined in metadata, not embedded in the cell value
+
+Python-specific interoperability requirements:
+
+- columns should not mix numeric values with strings such as `error`, `off`, or `n/a`
+- vendor-specific missing-value strings such as `NA`, `N/A`, `null`, `NULL`, `-`, or `9999` should be avoided in raw exports unless they are explicitly documented in metadata
+- if integer columns can contain missing values, this must be documented, as some Python tooling may otherwise infer floating-point types during import
+- where practical, one physical quantity should map to one column and one dtype
+
+:::{.callout-note}
+#### On sentinel values
+
+Some devices use sentinel values to indicate special information, like `sleep`, or `out of bounds`. This behavior is discouraged within the same column as other (measurement) information is contained. Instead, a new variable containing the status information (if necessary as a sentinal value) should be used and the measurement column be set to missing for a given observation.
+
+:::
+
+### Record ordering and uniqueness
+
+Records should be ordered by ascending timestamp within each file and timestamps need to be unique.
+
+If a file represents a single continuous stream, each row should be uniquely identifiable by the timestamp.
+
+### Timestamps
+
+Timestamps in wearable data must contain date and time information in a consistent, unambiguous, and machine-readable format. Because time handling is complex, timestamps require special care.
+
+A time zone should not be confused with a UTC offset. For any given moment, a time zone maps to a specific offset, but a time zone also captures daylight saving time rules and policy changes. Therefore, local time plus time zone contains more information than local time plus offset alone.
+
+Date and time values should follow [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html). A practical internet profile is described in [RFC 3339, Section 5.6](https://datatracker.ietf.org/doc/html/rfc3339#section-5.6).
+
+At the time of writing, many devices do not include UTC offsets in exported timestamps, which can create ambiguity around daylight saving transitions. This ambiguity can be avoided if:
+
+- datetimes follow ISO 8601 / RFC 3339 conventions
+- timestamps in the data file are stored in UTC
+- UTC timestamps are encoded with the `Z` suffix (for example, `2026-03-09T14:30:00Z`)
+- the participant's or device's local time zone is stored in metadata using an [IANA time zone identifier](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) such as `Europe/Berlin`
+
+Recommended practice:
+
+- include one canonical timestamp column named `Datetime`
+- store `Datetime` in UTC in full datetime format with seconds
+- if sub-second precision is available and scientifically relevant, use a fixed precision consistently throughout the file
+- do not mix naive local timestamps and UTC timestamps in the same column
+- if a local device timestamp is required in addition to UTC, store it in a separate column and document it clearly in metadata
+
+:::{.callout-note}
+Time-series analysis often requires a regularly spaced, uninterrupted time series. Manufacturers can support researchers in a major way by ensuring that observations are stored in regular and consistent intervals (e.g., every 60 seconds), and that gaps in the data collection are explicit (i.e., timestamped missing data).
+:::
+
+### Missing data
+
+Missing data should be represented explicitly and consistently.
+
+Requirements:
+
+- a missing value must not change the number of fields in a row
+- missing values should be encoded as empty fields
+- the meaning of missingness should be documented in metadata where relevant (e.g., sensor saturation, device off-body, battery depletion, or processing failure)
+
+If a distinction between different types of missingness is scientifically required, that distinction should be represented in separate status or quality-control columns rather than by mixing ad hoc string tokens into measurement columns.
+
+### Complex data
+
+In some cases, wearable device output is too complex to be fully represented in a single CSV file. Examples include images, videos, binary sensor payloads, or unavoidable proprietary sidecar files.
+
+In such cases, the CSV file should contain:
+
+- a timestamp column representing the relevant time point or start time
+- a file reference column containing the file name or relative path of the associated object
+- any required modality or event-type columns needed to interpret the referenced file
+
+Associated files should be stored in a documented directory structure and described in metadata. File references should be relative rather than absolute so that datasets remain portable across systems.
+
+### Python-specific implementation notes
+
+The requirements above are language-agnostic, but the following conventions are especially important for robust Python ingestion with tools such as `pandas`, `polars`, and `pyarrow`:
+
+- UTF-8 encoding should be used consistently
+- column names should be unique and stable across software versions
+- each column should have a single intended dtype
+- datetimes should be parseable without custom locale settings
+- delimiters, decimal separators, and missing-value encodings should be fixed across all exports from a device family
+- very large files may optionally be distributed in compressed form (e.g., `.csv.gz`) provided the contained file remains a standards-compliant CSV
+- schema changes between firmware or software versions should be versioned and documented in metadata
+
+A minimal interoperable export should therefore provide:
+
+- one CSV file with a single header row
+- UTF-8 encoding
+- one canonical UTC timestamp column named `Datetime`
+- consistent rectangular rows
+- stable column names
+- metadata that defines variables, units, missingness rules, and time zone context
+
