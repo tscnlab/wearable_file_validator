@@ -1,5 +1,5 @@
 ---
-title: "File format considerations"
+title: "Unified wearable file format"
 author: 
   - name: "Johannes Zauner"
   - name: "Salma Thalji"
@@ -10,17 +10,83 @@ format:
     code-tools: true
     toc: true
     toc-depth: 3
+    lightbox: true
+  docx:
+    toc: true
+    toc-depth: 3
+    number-sections: true
 filters:
   - shinylive
 ---
 
+## Preface
+
+In the MeLiDos project (@sec-project), a jointly accessible and interoperable data format for light dosimetry data was developed, alongside a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the [Global Light Commons (GLC) website](https://tscnlab.github.io/glc_dp_viewer/).
+
+This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.
+
+For the MeLiDos analysis package [LightLogR](https://tscnlab.github.io/LightLogR/), file formats from 19 devices were reviewed, and substantial variation in both file structure and preprocessing requirements was found. Moving forward, device manufacturers are encouraged to standardize wearable export formats and to adopt the dual structure of data plus metadata, even if only part of the metadata is embedded directly with the export.
+
+```{r}
+#| message: false
+#| warning: false
+library(LightLogR)
+supported_devices()
+```
+
+This document focuses on the data part and summarizes relevant design considerations derived from existing formats. The goal is to optimize, across files and devices, for:
+
+- readability
+- consistency
+- unambiguity
+- machine-readability
+- cross-language interoperability
+
+:::{.callout-note}
+In this document, the term `record` is used interchangeably with `observation` and refers to one written row in an export file for a given time point or event.
+:::
+
+### Overview of the proposed format
+
+The proposed structure separates wearable exports into a simple tabular data file and a metadata descriptor (see @fig-flowchart). The data file contains the observations themselves, while the metadata descriptor defines how those observations should be interpreted.
+
+```{mermaid}
+%%| label: fig-flowchart
+%%| fig-cap: "Structure of a wearable device export with a CSV data file and accompanying metadata descriptor."
+%%| fig-alt: "Flowchart showing that a wearable device export consists of a data CSV file and a metadata descriptor. The CSV file requires rectangular rows and columns, a single header row, canonical UTC timestamps, consistent data types, and portable encoding and separators. The metadata descriptor defines variables, units, device metadata, participant or study metadata, and rules for time zones and missing data."
+
+%%{init: {"flowchart": {"diagramPadding": 40, "nodeSpacing": 40, "rankSpacing": 55}} }%%
+
+flowchart LR
+    A[Wearable device export] --> B[Data file<br/>CSV]
+    A --> C[Metadata descriptor]
+
+    B --> B1[Rectangular rows and columns]
+    B --> B2[Single header row]
+    B --> B3[Canonical UTC timestamp<br/>Datetime]
+    B --> B4[Consistent data types per column]
+    B --> B5[Portable encoding and separators]
+
+    C --> C1[Variable definitions]
+    C --> C2[Units]
+    C --> C3[Device metadata]
+    C --> C4[Participant / study metadata]
+    C --> C5[Time zone and missing-data rules]
+```
+
 ## Validator
 
-The following application runs in your browser. Datasets you provide will not be uploaded outside your computer and thus ensure privacy. Please see the sections below for more context on the validator.
+::: {.content-visible when-format="docx"}
+In the web-version of this document, a file validator application is embedded. The web-version is hosted on [GitHub pages](https://tscnlab.github.io/wearable_file_validator/).
+:::
+
+The validator application runs in the browser. Provided datasets will not be uploaded outside the users computer and thus ensure privacy. Please see the sections below for more context on the validator.
+
+::: {.content-visible when-format="html"}
 
 ### Example file
 
-We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+An example file can be downloaded here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
 
 ### Interactive validator
 
@@ -956,62 +1022,17 @@ shinyApp(ui, server)
 
 :::
 
-
-## Preface
-
-The [MeLiDos](www.melidos.eu) project aims for standardized *Metrology for wearable light loggers and optical radiation dosimeters*.
-
-MeLiDos activity A2.3.1 calls for the development of a jointly accessible and interoperable data format for light dosimetry data. This is closely linked to A2.3.2, the development of a metadata descriptor. The metadata descriptor, described [in this publication](https://link.springer.com/article/10.1186/s44247-024-00113-9), separates the overall format into a data part and a metadata part. The metadata part contains information about the dataset itself (e.g., column names, variables, units, and value definitions) as well as information about the device, participant, and study. The metadata schema is explained in detail in the [Global Light Commons (GLC) website](https://tscnlab.github.io/glc_dp_viewer/).
-
-This separation keeps the device data file simple and flexible. It does not mean, however, that the data file is arbitrary.
-
-For the MeLiDos analysis package [LightLogR](https://tscnlab.github.io/LightLogR/), we reviewed file formats from 19 devices and found substantial variation in both file structure and preprocessing requirements. Moving forward, we encourage device manufacturers to standardize wearable export formats and to adopt the dual structure of data plus metadata, even if only part of the metadata is embedded directly with the export.
-
-```{r}
-#| message: false
-#| warning: false
-library(LightLogR)
-supported_devices()
-```
-
-This document focuses on the data part and summarizes relevant design considerations derived from existing formats. The goal is to optimize, across files and devices, for:
-
-- readability
-- consistency
-- unambiguity
-- machine-readability
-- cross-language interoperability
-
-:::{.callout-note}
-In this document, the term `record` is used interchangeably with `observation` and refers to one written row in an export file for a given time point or event.
 :::
-
-### Overview of the proposed format
-
-The proposed structure separates wearable exports into a simple tabular data file and a metadata descriptor. The data file contains the observations themselves, while the metadata descriptor defines how those observations should be interpreted.
-
-```{mermaid}
-flowchart LR
-    A[Wearable device export] --> B[Data file<br/>CSV]
-    A --> C[Metadata descriptor]
-
-    B --> B1[Rectangular rows and columns]
-    B --> B2[Single header row]
-    B --> B3[Canonical UTC timestamp<br/>Datetime]
-    B --> B4[Consistent dtypes per column]
-    B --> B5[Portable encoding and separators]
-
-    C --> C1[Variable definitions]
-    C --> C2[Units]
-    C --> C3[Device metadata]
-    C --> C4[Participant / study metadata]
-    C --> C5[Time zone and missing-data rules]
-
-```
 
 ## Data format considerations
 
+::: {.content-visible when-format="html"}
 We provide an example file to download here: [⬇ Download CSV](data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+:::
+
+::: {.content-visible when-format="docx"}
+An example file can be downloaded here: [⬇ Download CSV](https://raw.githubusercontent.com/tscnlab/wearable_file_validator/main/data/wearable_light_example.csv){.btn .btn-primary download="wearable_light_example.csv"}
+:::
 
 ### Base format
 
@@ -1038,9 +1059,9 @@ Exported files must not contain locale-dependent variations. The file format mus
 
 ### Tabular data
 
-Wearable data are typically analyzed as time series. Such analyses are best supported by rectangular tabular data, with variables in columns and observations in rows. In rectangular data, each row has the same number of fields and each column represents the same variable throughout the file. Cells may be empty to indicate missing data, but the structure itself must not vary across rows.
+Wearable data are typically analyzed as time series. Such analyses are best supported by rectangular tabular data, with variables in columns and observations in rows (see @fig-tidy). In rectangular data, each row has the same number of fields and each column represents the same variable throughout the file. Cells may be empty to indicate missing data, but the structure itself must not vary across rows.
 
-![Rectangular tabular data structure with a `tidy` arrangement. From [R for Data Science](https://r4ds.had.co.nz/tidy-data.html)](https://r4ds.had.co.nz/images/tidy-1.png)
+![Rectangular tabular data structure with a `tidy` arrangement. From [R for Data Science](https://r4ds.had.co.nz/tidy-data.html)](https://r4ds.had.co.nz/images/tidy-1.png){#fig-tidy}
 
 ::: {.callout-note}
 This structure can be inefficient when not all variables are recorded for every observation. This may occur when a device contains multiple sensors or modalities sampled at different intervals, or when irregular event records occur (e.g., button presses).
@@ -1185,3 +1206,10 @@ A minimal interoperable export should therefore provide:
 - stable column names
 - metadata that defines variables, units, missingness rules, and time zone context
 
+## About the creation and funding of the *Unified wearable file format* {#sec-project}
+
+The file format considerations described above are developed as part of the MeLiDos project. [*MeLiDos*](https://www.melidos.eu) is a joint, [EURAMET](https://www.euramet.org)-funded project involving sixteen partners across Europe, aimed at developing a metrology and a standard workflow for wearable light logger data and optical radiation dosimeters. Its primary contributions towards fostering FAIR data include the development of a common file format, robust metadata descriptors, and an accompanying open-source software ecosystem.
+
+[![](assets/Metrology_Partnership_LOGO.jpg){width="282"}](https://www.euramet.org) ![](assets/Co-Funded-By-the-EU.png){width="288"}
+
+The project (22NRM05 MeLiDos) has received funding from the European Partnership on Metrology, co-financed from the European Union's Horizon Europe Research and Innovation Programme and by the Participating States. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or EURAMET. Neither the European Union nor the granting authority can be held responsible for them.
