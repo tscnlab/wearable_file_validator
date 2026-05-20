@@ -92,7 +92,7 @@ An example file can be downloaded here: [⬇ Download CSV](data/wearable_light_e
 
 This validator works up to file sizes of 10 MB.
 
-::: {.column-page}
+:::: {.column-page}
 
 ```{shinylive-r}
 #| standalone: true
@@ -1020,7 +1020,7 @@ shinyApp(ui, server)
 
 ```
 
-:::
+::::
 
 :::
 
